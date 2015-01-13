@@ -713,7 +713,7 @@ Text *text_load(const char *filename) {
 		if (fstat(txt->fd, &txt->info) == -1)
 			goto out;
 		if (!S_ISREG(txt->info.st_mode)) {
-			errno = EISDIR;
+			errno = S_ISDIR(txt->info.st_mode) ? EISDIR : ENOTSUP;
 			goto out;
 		}
 		// XXX: use lseek(fd, 0, SEEK_END); instead?
@@ -756,7 +756,7 @@ Text *text_load_fd(int fd) {
 }
 
 static void print_piece(Piece *p) {
-	fprintf(stderr, "index: %d\tnext: %d\tprev: %d\t len: %d\t data: %p\n", p->index,
+	fprintf(stderr, "index: %d\tnext: %d\tprev: %d\t len: %zd\t data: %p\n", p->index,
 		p->next ? p->next->index : -1,
 		p->prev ? p->prev->index : -1,
 		p->len, p->data);
@@ -1175,6 +1175,18 @@ void text_mark_intern_clear(Text *txt, MarkIntern mark) {
 void text_mark_intern_clear_all(Text *txt) {
 	for (MarkIntern mark = 0; mark < LENGTH(txt->marks); mark++)
 		text_mark_intern_clear(txt, mark);
+}
+
+size_t text_history_get(Text *txt, size_t index) {
+	for (Action *a = txt->current_action ? txt->current_action : txt->undo; a; a = a->next) {
+		if (index-- == 0) {
+			Change *c = a->change;
+			while (c && c->next)
+				c = c->next;
+			return c ? c->pos : EPOS;
+		}
+	}
+	return EPOS;
 }
 
 int text_fd_get(Text *txt) {

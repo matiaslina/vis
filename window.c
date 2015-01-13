@@ -108,7 +108,7 @@ void window_selection_clear(Win *win) {
 static int window_numbers_width(Win *win) {
 	if (!win->winnum)
 		return 0;
-	return snprintf(NULL, 0, "%d", win->topline->lineno + win->height - 1) + 1;
+	return snprintf(NULL, 0, "%zd", win->topline->lineno + win->height - 1) + 1;
 }
 
 static void window_numbers_draw(Win *win) {
@@ -194,8 +194,8 @@ static bool window_addch(Win *win, Char *c) {
 	if (!win->line)
 		return false;
 
-	Cell empty = {};
 	int width;
+	Cell empty = { .len = 0, .data = '\0' };
 	size_t lineno = win->line->lineno;
 
 	switch (c->wchar) {
@@ -296,16 +296,16 @@ static bool window_addch(Win *win, Char *c) {
 	}
 }
 
-void window_cursor_getxy(Win *win, size_t *lineno, size_t *col) {
+CursorPos window_cursor_getpos(Win *win) {
 	Cursor *cursor = &win->cursor;
 	Line *line = cursor->line;
-	*lineno = line->lineno;
-	*col = cursor->col;
-	while (line->prev && line->prev->lineno == *lineno) {
+	CursorPos pos = { .line = line->lineno, .col = cursor->col };
+	while (line->prev && line->prev->lineno == pos.line) {
 		line = line->prev;
-		*col += line->width;
+		pos.col += line->width;
 	}
-	*col += 1;
+	pos.col++;
+	return pos;
 }
 
 /* place the cursor according to the screen coordinates in win->{row,col} and

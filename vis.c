@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <strings.h>
 #include <signal.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -384,8 +385,10 @@ static TextObject *moves_linewise[] = {
 };
 
 /** functions to be called from keybindings */
-/* navigate jumplist either in forward (arg->i>0) or backward (arg->i<0) direction */
+/* navigate jump list either in forward (arg->i>0) or backward (arg->i<0) direction */
 static void jumplist(const Arg *arg);
+/* navigate change list either in forward (arg->i>0) or backward (arg->i<0) direction */
+static void changelist(const Arg *arg);
 static void macro_record(const Arg *arg);
 static void macro_replay(const Arg *arg);
 /* temporarily suspend the editor and return to the shell, type 'fg' to get back */
@@ -407,8 +410,6 @@ static void put(const Arg *arg);
 static void openline(const Arg *arg);
 /* join lines from current cursor position to movement indicated by arg */
 static void join(const Arg *arg);
-/* create a new window with the filename arg->s */
-static void winnew(const Arg *arg);
 /* execute arg->s as if it was typed on command prompt */
 static void cmd(const Arg *arg);
 /* perform last action i.e. action_prev again */
@@ -482,8 +483,6 @@ static void quit(const Arg *arg);
 /** commands to enter at the ':'-prompt */
 /* set various runtime options */
 static bool cmd_set(Filerange*, const char *argv[]);
-/* goto line indicated by argv[0] */
-static bool cmd_gotoline(Filerange*, const char *argv[]);
 /* for each argument create a new window and open the corresponding file */
 static bool cmd_open(Filerange*, const char *argv[]);
 /* close current window (discard modifications if argv[0] contains '!')
@@ -509,6 +508,8 @@ static bool cmd_new(Filerange*, const char *argv[]);
 static bool cmd_vnew(Filerange*, const char *argv[]);
 /* save the file displayed in the current window and close it */
 static bool cmd_wq(Filerange*, const char *argv[]);
+/* save the file displayed in the current window if it was changed, then close the window */
+static bool cmd_xit(Filerange*, const char *argv[]);
 /* save the file displayed in the current window to the name given.
  * do not change internal filname association. further :w commands
  * without arguments will still write to the old filename */
@@ -520,6 +521,8 @@ static bool cmd_saveas(Filerange*, const char *argv[]);
 
 static void action_reset(Action *a);
 static void switchmode_to(Mode *new_mode);
+static bool vis_window_new(const char *file);
+static bool vis_window_split(EditorWin *win);
 
 #include "config.h"
 
@@ -626,7 +629,7 @@ static void op_shift_left(OperatorContext *c) {
 
 static void op_case_change(OperatorContext *c) {
 	size_t len = c->range.end - c->range.start;
-	char *buf = malloc(len+1);
+	char *buf = malloc(len);
 	if (!buf)
 		return;
 	len = text_bytes_get(vis->win->text, c->range.start, len, buf);
@@ -805,6 +808,16 @@ static void jumplist(const Arg *arg) {
 		pos = editor_window_jumplist_next(vis->win);
 	else
 		pos = editor_window_jumplist_prev(vis->win);
+	if (pos != EPOS)
+		window_cursor_to(vis->win->win, pos);
+}
+
+static void changelist(const Arg *arg) {
+	size_t pos;
+	if (arg->i > 0)
+		pos = editor_window_changelist_next(vis->win);
+	else
+		pos = editor_window_changelist_prev(vis->win);
 	if (pos != EPOS)
 		window_cursor_to(vis->win->win, pos);
 }
@@ -1058,10 +1071,6 @@ static void quit(const Arg *arg) {
 	running = false;
 }
 
-static void winnew(const Arg *arg) {
-	editor_window_new(vis, arg->s);
-}
-
 static void cmd(const Arg *arg) {
 	/* casting to char* is only save if arg->s contains no arguments */
 	exec_command(':', (char*)arg->s);
@@ -1109,12 +1118,31 @@ static void insert(const Arg *arg) {
 }
 
 static void insert_tab(const Arg *arg) {
-	return insert(&(const Arg){ .s = expand_tab() });
+	insert(&(const Arg){ .s = expand_tab() });
+}
+
+static void copy_indent_from_previous_line(Win *win, Text *text) {
+	size_t pos = window_cursor_get(win);
+	size_t prev_line = text_line_prev(text, pos);
+	if (pos == prev_line)
+		return;
+	size_t begin = text_line_begin(text, prev_line);
+	size_t start = text_line_start(text, begin);
+	size_t len = start-begin;
+	char *buf = malloc(len);
+	if (!buf)
+		return;
+	len = text_bytes_get(text, begin, len, buf);
+	editor_insert_key(vis, buf, len);
+	free(buf);
 }
 
 static void insert_newline(const Arg *arg) {
 	insert(&(const Arg){ .s =
 	       text_newlines_crnl(vis->win->text) ? "\r\n" : "\n" });
+
+	if (vis->autoindent)
+		copy_indent_from_previous_line(vis->win->win, vis->win->text);
 }
 
 static void put(const Arg *arg) {
@@ -1124,9 +1152,14 @@ static void put(const Arg *arg) {
 }
 
 static void openline(const Arg *arg) {
-	movement(&(const Arg){ .i = arg->i == MOVE_LINE_NEXT ?
-	                       MOVE_LINE_END : MOVE_LINE_PREV });
-	insert_newline(NULL);
+	if (arg->i == MOVE_LINE_NEXT) {
+		movement(&(const Arg){ .i = MOVE_LINE_END });
+		insert_newline(NULL);
+	} else {
+		movement(&(const Arg){ .i = MOVE_LINE_BEGIN });
+		insert_newline(NULL);
+		movement(&(const Arg){ .i = MOVE_LINE_PREV });
+	}
 	switchmode(&(const Arg){ .i = VIS_MODE_INSERT });
 }
 
@@ -1282,54 +1315,148 @@ static void switchmode_to(Mode *new_mode) {
 
 /** ':'-command implementations */
 
+/* parse human-readable boolean value in s. If successful, store the result in
+ * outval and return true. Else return false and leave outval alone. */
+static bool parse_bool(const char *s, bool *outval) {
+	for (const char **t = (const char*[]){"1", "true", "yes", "on", NULL}; *t; t++) {
+		if (!strcasecmp(s, *t)) {
+			*outval = true;
+			return true;
+		}
+	}
+	for (const char **f = (const char*[]){"0", "false", "no", "off", NULL}; *f; f++) {
+		if (!strcasecmp(s, *f)) {
+			*outval = false;
+			return true;
+		}
+	}
+	return false;
+}
+
 static bool cmd_set(Filerange *range, const char *argv[]) {
-	if (!argv[2]) {
-		editor_info_show(vis, "Expecting: set option value");
+
+	typedef struct {
+		const char *name;
+		enum {
+			OPTION_TYPE_STRING,
+			OPTION_TYPE_BOOL,
+			OPTION_TYPE_NUMBER,
+		} type;
+		regex_t regex;
+	} OptionDef;
+
+	enum {
+		OPTION_AUTOINDENT,
+		OPTION_EXPANDTAB,
+		OPTION_TABWIDTH,
+		OPTION_SYNTAX,
+		OPTION_NUMBER,
+	};
+
+	static OptionDef options[] = {
+		[OPTION_AUTOINDENT] = { "^(autoindent|ai)$", OPTION_TYPE_BOOL   },
+		[OPTION_EXPANDTAB]  = { "^(expandtab|et)$",  OPTION_TYPE_BOOL   },
+		[OPTION_TABWIDTH]   = { "^(tabwidth|tw)$",   OPTION_TYPE_NUMBER },
+		[OPTION_SYNTAX]     = { "^syntax$",          OPTION_TYPE_STRING },
+		[OPTION_NUMBER]     = { "^(numbers?|nu)$",   OPTION_TYPE_BOOL   },
+	};
+
+	static bool init = false;
+
+	if (!init) {
+		for (int i = 0; i < LENGTH(options); i++)
+			regcomp(&options[i].regex, options[i].name, REG_EXTENDED|REG_ICASE);
+		init = true;
+	}
+
+	if (!argv[1]) {
+		editor_info_show(vis, "Expecting: set option [value]");
 		return false;
 	}
 
-	if (!strcmp("tabwidth", argv[1])) {
-		editor_tabwidth_set(vis, strtoul(argv[2], NULL, 10));
-	} else if (!strcmp("expandtab", argv[1])) {
-		switch (argv[2][0]) {
-		case '1': case 't': /* true */ case 'y': /* yes */
-			vis->expandtab = true;
+	int opt = -1; Arg arg; bool invert = false;
+
+	for (int i = 0; i < LENGTH(options); i++) {
+		if (!regexec(&options[i].regex, argv[1], 0, NULL, 0)) {
+			opt = i;
 			break;
-		case '0': case 'f': /* false */ case 'n': /* no */
-			vis->expandtab = false;
+		}
+		if (options[i].type == OPTION_TYPE_BOOL && !strncasecmp(argv[1], "no", 2) &&
+		    !regexec(&options[i].regex, argv[1]+2, 0, NULL, 0)) {
+			opt = i;
+			invert = true;
 			break;
-		default:
-			editor_info_show(vis, "Expecting: set expandtab [0|1]");
-			return false;
 		}
-	} else if (!strcmp("syntax", argv[1])) {
-		for (Syntax *syntax = syntaxes; syntax && syntax->name; syntax++) {
-			if (!strcmp(syntax->name, argv[2])) {
-				window_syntax_set(vis->win->win, syntax);
-				return true;
-			}
-		}
-		window_syntax_set(vis->win->win, NULL);
-		return false;
-	} else if (!strcmp("number", argv[1])) {
-		window_line_numbers_show(vis->win->win, argv[2][0] == '1');
-	} else {
+	}
+
+	if (opt == -1) {
 		editor_info_show(vis, "Unknown option: `%s'", argv[1]);
 		return false;
 	}
 
-	return true;
-}
+	switch (options[opt].type) {
+	case OPTION_TYPE_STRING:
+		if (!argv[2]) {
+			editor_info_show(vis, "Expecting string option value");
+			return false;
+		}
+		break;
+	case OPTION_TYPE_BOOL:
+		if (!argv[2]) {
+			arg.b = true;
+		} else if (!parse_bool(argv[2], &arg.b)) {
+			editor_info_show(vis, "Expecting boolean option value not: `%s'", argv[2]);
+			return false;
+		}
+		if (invert)
+			arg.b = !arg.b;
+		break;
+	case OPTION_TYPE_NUMBER:
+		if (!argv[2]) {
+			editor_info_show(vis, "Expecting number");
+			return false;
+		}
+		/* TODO: error checking? long type */
+		arg.i = strtoul(argv[2], NULL, 10);
+		break;
+	}
 
-static bool cmd_gotoline(Filerange *range, const char *argv[]) {
-	action.count = strtoul(argv[0], NULL, 10);
-	movement(&(const Arg){ .i = action.count <= 1 ? MOVE_FILE_BEGIN : MOVE_LINE });
+	switch (opt) {
+	case OPTION_EXPANDTAB:
+		vis->expandtab = arg.b;
+		break;
+	case OPTION_AUTOINDENT:
+		vis->autoindent = arg.b;
+		break;
+	case OPTION_TABWIDTH:
+		editor_tabwidth_set(vis, arg.i);
+		break;
+	case OPTION_SYNTAX:
+		for (Syntax *syntax = syntaxes; syntax && syntax->name; syntax++) {
+			if (!strcasecmp(syntax->name, argv[2])) {
+				window_syntax_set(vis->win->win, syntax);
+				return true;
+			}
+		}
+
+		if (parse_bool(argv[2], &arg.b) && !arg.b)
+			window_syntax_set(vis->win->win, NULL);
+		else
+			editor_info_show(vis, "Unknown syntax definition: `%s'", argv[2]);
+		break;
+	case OPTION_NUMBER:
+		window_line_numbers_show(vis->win->win, arg.b);
+		break;
+	}
+
 	return true;
 }
 
 static bool cmd_open(Filerange *range, const char *argv[]) {
+	if (!argv[1])
+		return vis_window_new(NULL);
 	for (const char **file = &argv[1]; *file; file++) {
-		if (!editor_window_new(vis, *file)) {
+		if (!vis_window_new(*file)) {
 			errno = 0;
 			editor_info_show(vis, "Can't open `%s' %s", *file,
 			                 errno ? strerror(errno) : "");
@@ -1362,7 +1489,7 @@ static bool cmd_edit(Filerange *range, const char *argv[]) {
 	}
 	if (!argv[1])
 		return editor_window_reload(oldwin);
-	if (!editor_window_new(vis, argv[1]))
+	if (!vis_window_new(argv[1]))
 		return false;
 	editor_window_close(oldwin);
 	return true;
@@ -1378,6 +1505,15 @@ static bool cmd_quit(Filerange *range, const char *argv[]) {
 	if (!vis->windows)
 		quit(NULL);
 	return true;
+}
+
+static bool cmd_xit(Filerange *range, const char *argv[]) {
+	if (text_modified(vis->win->text) && !cmd_write(range, argv)) {
+		bool force = strchr(argv[0], '!') != NULL;
+		if (!force)
+			return false;
+	}
+	return cmd_quit(range, argv);
 }
 
 static bool cmd_bdelete(Filerange *range, const char *argv[]) {
@@ -1448,7 +1584,7 @@ static bool cmd_substitute(Filerange *range, const char *argv[]) {
 static bool openfiles(const char **files) {
 	for (; *files; files++) {
 		errno = 0;
-		if (!editor_window_new(vis, *files)) {
+		if (!vis_window_new(*files)) {
 			editor_info_show(vis, "Could not open `%s' %s", *files,
 			                 errno ? strerror(errno) : "");
 			return false;
@@ -1460,7 +1596,7 @@ static bool openfiles(const char **files) {
 static bool cmd_split(Filerange *range, const char *argv[]) {
 	editor_windows_arrange_horizontal(vis);
 	if (!argv[1])
-		return editor_window_split(vis->win);
+		return vis_window_split(vis->win);
 	return openfiles(&argv[1]);
 }
 
@@ -1473,12 +1609,12 @@ static bool cmd_vsplit(Filerange *range, const char *argv[]) {
 
 static bool cmd_new(Filerange *range, const char *argv[]) {
 	editor_windows_arrange_horizontal(vis);
-	return editor_window_new(vis, NULL);
+	return vis_window_new(NULL);
 }
 
 static bool cmd_vnew(Filerange *range, const char *argv[]) {
 	editor_windows_arrange_vertical(vis);
-	return editor_window_new(vis, NULL);
+	return vis_window_new(NULL);
 }
 
 static bool cmd_wq(Filerange *range, const char *argv[]) {
@@ -1556,6 +1692,16 @@ static Filepos parse_pos(char **cmd) {
 		}
 		text_regex_free(regex);
 		break;
+	case '+':
+	case '-':
+	{
+		CursorPos curspos = window_cursor_getpos(win);
+		long long line = curspos.line + strtoll(*cmd, cmd, 10);
+		if (line < 0)
+			line = 0;
+		pos = text_pos_by_lineno(txt, line);
+		break;
+	}
 	default:
 		if ('0' <= **cmd && **cmd <= '9')
 			pos = text_pos_by_lineno(txt, strtoul(*cmd, cmd, 10));
@@ -1567,10 +1713,11 @@ static Filepos parse_pos(char **cmd) {
 
 static Filerange parse_range(char **cmd) {
 	Text *txt = vis->win->text;
-	Filerange r = (Filerange){ .start = 0, .end = text_size(txt) };
-	char *start = *cmd;
+	Filerange r = text_range_empty();
 	switch (**cmd) {
 	case '%':
+		r.start = 0;
+		r.end = text_size(txt);
 		(*cmd)++;
 		break;
 	case '*':
@@ -1580,10 +1727,8 @@ static Filerange parse_range(char **cmd) {
 		break;
 	default:
 		r.start = parse_pos(cmd);
-		if (**cmd != ',') {
-			*cmd = start;
-			return text_range_empty();
-		}
+		if (**cmd != ',')
+			return r;
 		(*cmd)++;
 		r.end = parse_pos(cmd);
 		break;
@@ -1603,6 +1748,12 @@ static bool exec_cmdline_command(char *cmdline) {
 	char *cmdstart = cmdline;
 	Filerange range = parse_range(&cmdstart);
 	if (!text_range_valid(&range)) {
+		/* if only one position was given, jump to it */
+		if (range.start != EPOS && !*cmdstart) {
+			window_cursor_to(vis->win->win, range.start);
+			return true;
+		}
+
 		if (cmdstart != cmdline) {
 			editor_info_show(vis, "Invalid range\n");
 			return false;
@@ -1671,6 +1822,42 @@ static bool exec_command(char type, char *cmd) {
 			return true;
 	}
 	return false;
+}
+
+static void settings_apply(const char **settings) {
+	for (const char **opt = settings; opt && *opt; opt++) {
+		char *tmp = strdup(*opt);
+		if (tmp)
+			exec_cmdline_command(tmp);
+		free(tmp);
+	}
+}
+
+static bool vis_window_new(const char *file) {
+	if (!editor_window_new(vis, file))
+		return false;
+	Syntax *s = window_syntax_get(vis->win->win);
+	if (s)
+		settings_apply(s->settings);
+	return true;
+}
+
+static bool vis_window_new_fd(int fd) {
+	if (!editor_window_new_fd(vis, fd))
+		return false;
+	Syntax *s = window_syntax_get(vis->win->win);
+	if (s)
+		settings_apply(s->settings);
+	return true;
+}
+
+static bool vis_window_split(EditorWin *win) {
+	if (!editor_window_split(win))
+		return false;
+	Syntax *s = window_syntax_get(vis->win->win);
+	if (s)
+		settings_apply(s->settings);
+	return true;
 }
 
 typedef struct Screen Screen;
@@ -1805,7 +1992,7 @@ static Key getkey(void) {
 		int len = 1;
 		unsigned char keychar = keycode;
 		if (ISASCII(keychar)) len = 1;
-		else if (keychar == '\e' || keychar >= 0xFC) len = 6;
+		else if (keychar == 0x1B || keychar >= 0xFC) len = 6;
 		else if (keychar >= 0xF8) len = 5;
 		else if (keychar >= 0xF0) len = 4;
 		else if (keychar >= 0xE0) len = 3;
@@ -1833,6 +2020,7 @@ static void mainloop() {
 	sigemptyset(&blockset);
 	sigaddset(&blockset, SIGWINCH);
 	sigprocmask(SIG_BLOCK, &blockset, NULL);
+	editor_draw(vis);
 
 	while (running) {
 		if (screen.need_resize) {
@@ -1902,7 +2090,7 @@ int main(int argc, char *argv[]) {
 			}
 		} else if (argv[i][0] == '+') {
 			cmd = argv[i] + (argv[i][1] == '/' || argv[i][1] == '?');
-		} else if (!editor_window_new(vis, argv[i])) {
+		} else if (!vis_window_new(argv[i])) {
 			die("Can not load `%s': %s\n", argv[i], strerror(errno));
 		} else if (cmd) {
 			exec_command(cmd[0], cmd+1);
@@ -1912,20 +2100,21 @@ int main(int argc, char *argv[]) {
 
 	if (!vis->windows) {
 		if (!strcmp(argv[argc-1], "-") || !isatty(STDIN_FILENO)) {
-			if (!editor_window_new_fd(vis, STDIN_FILENO))
+			if (!vis_window_new_fd(STDIN_FILENO))
 				die("Can not read from stdin\n");
 			int fd = open("/dev/tty", O_RDONLY);
 			if (fd == -1)
 				die("Can not reopen stdin\n");
 			dup2(fd, STDIN_FILENO);
 			close(fd);
-		} else if (!editor_window_new(vis, NULL)) {
+		} else if (!vis_window_new(NULL)) {
 			die("Can not create empty buffer\n");
 		}
 		if (cmd)
 			exec_command(cmd[0], cmd+1);
 	}
 
+	settings_apply(settings);
 	mainloop();
 	editor_free(vis);
 	endwin();

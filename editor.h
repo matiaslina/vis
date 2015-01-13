@@ -13,11 +13,17 @@
 typedef struct Editor Editor;
 typedef struct EditorWin EditorWin;
 
+typedef struct {
+	size_t index;           /* #number of changes */
+	size_t pos;             /* where the current change occured */
+} ChangeList;
+
 struct EditorWin {
 	Editor *editor;         /* editor instance to which this window belongs */
 	Text *text;             /* underlying text management */
 	Win *win;               /* window for the text area  */
 	RingBuffer *jumplist;   /* LRU jump management */
+	ChangeList changelist;  /* state for iterating through least recently changes */
 	WINDOW *statuswin;      /* curses window for the statusbar */
 	int width, height;      /* window size including the statusbar */
 	EditorWin *prev, *next; /* neighbouring windows */
@@ -108,6 +114,7 @@ struct Editor {
 	void (*statusbar)(EditorWin*);    /* configurable user hook to draw statusbar */
 	int tabwidth;                     /* how many spaces should be used to display a tab */
 	bool expandtab;                   /* whether typed tabs should be converted to spaces */
+	bool autoindent;                  /* whether indentation should be copied from previous line on newline */
 };
 
 Editor *editor_new(int width, int height);
@@ -157,6 +164,9 @@ void editor_window_jumplist_add(EditorWin*, size_t pos);
 size_t editor_window_jumplist_prev(EditorWin*);
 size_t editor_window_jumplist_next(EditorWin*);
 void editor_window_jumplist_invalidate(EditorWin*);
+
+size_t editor_window_changelist_prev(EditorWin*);
+size_t editor_window_changelist_next(EditorWin*);
 /* rearrange all windows either vertically or horizontally */
 void editor_windows_arrange_vertical(Editor*);
 void editor_windows_arrange_horizontal(Editor*);

@@ -22,8 +22,6 @@
  * if no binding is found, mode->input(...) is called and the user entered
  * keys are passed as argument. this is used to change the document content.
  */
-static Mode vis_modes[];
-
 enum {
 	VIS_MODE_BASIC,
 	VIS_MODE_MARK,
@@ -43,17 +41,19 @@ enum {
 	VIS_MODE_INSERT_REGISTER,
 	VIS_MODE_INSERT,
 	VIS_MODE_REPLACE,
+	VIS_MODE_LAST,
 };
+
+static Mode vis_modes[VIS_MODE_LAST];
 
 /* command recognized at the ':'-prompt. tested top to bottom, first match wins. */
 static Command cmds[] = {
-	{ "^[0-9]+$",        cmd_gotoline,   false },
 	{ "^bd(elete)?!?$",  cmd_bdelete,    false },
 	{ "^e(dit)?!?$",     cmd_edit,       false },
 	{ "^new$",           cmd_new,        false },
 	{ "^o(pen)?$",       cmd_open,       false },
 	{ "^qa(ll)?!?$",     cmd_qall,       false },
-	{ "^q(quit)?!?$",    cmd_quit,       false },
+	{ "^q(uit)?!?$",     cmd_quit,       false },
 	{ "^r(ead)?$",       cmd_read,       false },
 	{ "^sav(as)?$",      cmd_saveas,     false },
 	{ "^set?$",          cmd_set,        true  },
@@ -63,23 +63,24 @@ static Command cmds[] = {
 	{ "^v(split)?$",     cmd_vsplit,     false },
 	{ "^wq!?$",          cmd_wq,         false },
 	{ "^w(rite)?$",      cmd_write,      false },
+	{ "^x(it)?!?$",      cmd_xit,        false },
 	{ /* array terminator */                   },
 };
 
 /* draw a statubar, do whatever you want with win->statuswin curses window */
 static void statusbar(EditorWin *win) {
-	size_t line, col;
 	bool focused = vis->win == win || vis->prompt->editor == win;
-	window_cursor_getxy(win->win, &line, &col);
+	const char *filename = text_filename_get(win->text);
+	CursorPos pos = window_cursor_getpos(win->win);
 	wattrset(win->statuswin, focused ? A_REVERSE|A_BOLD : A_REVERSE);
 	mvwhline(win->statuswin, 0, 0, ' ', win->width);
 	mvwprintw(win->statuswin, 0, 0, "%s %s %s %s",
 	          mode->name && mode->name[0] == '-' ? mode->name : "",
-	          text_filename_get(win->text),
+	          filename ? filename : "[No Name]",
 	          text_modified(win->text) ? "[+]" : "",
 	          vis->recording ? "recording": "");
 	char buf[win->width + 1];
-	int len = snprintf(buf, win->width, "%d, %d", line, col);
+	int len = snprintf(buf, win->width, "%zd, %zd", pos.line, pos.col);
 	if (len > 0) {
 		buf[len] = '\0';
 		mvwaddstr(win->statuswin, 0, win->width - len - 1, buf);
@@ -370,7 +371,7 @@ static KeyBinding vis_marks_set[] = {
 };
 
 static KeyBinding vis_mode_normal[] = {
-	{ { CONTROL('w'), NONE('n') }, winnew,         { .s = NULL                 } },
+	{ { CONTROL('w'), NONE('n') }, cmd,            { .s = "open"               } },
 	{ { CONTROL('w'), NONE('c') }, cmd,            { .s = "q"                  } },
 	{ { CONTROL('w'), NONE('s') }, cmd,            { .s = "split"              } },
 	{ { CONTROL('w'), NONE('v') }, cmd,            { .s = "vsplit"             } },
@@ -384,6 +385,8 @@ static KeyBinding vis_mode_normal[] = {
 	{ { CONTROL('Y')            }, wslide,         { .i = +1                   } },
 	{ { CONTROL('O')            }, jumplist,       { .i = -1                   } },
 	{ { CONTROL('I')            }, jumplist,       { .i = +1                   } },
+	{ { NONE('g'), NONE(';')    }, changelist,     { .i = -1                   } },
+	{ { NONE('g'), NONE(',')    }, changelist,     { .i = +1                   } },
 	{ { NONE('a')               }, insertmode,     { .i = MOVE_CHAR_NEXT       } },
 	{ { NONE('A')               }, insertmode,     { .i = MOVE_LINE_END        } },
 	{ { NONE('C')               }, change,         { .i = MOVE_LINE_END        } },
@@ -854,6 +857,11 @@ static Config editors[] = {
 /* default editor configuration to use */
 static Config *config = &editors[0];
 
+/* null terminated default settings/commands executed once on editor startup */
+static const char *settings[] = {
+	NULL
+};
+
 /* Color definitions for use in the sytax highlighting rules below. A fore
  * or background color of -1 specifies the default terminal color. */
 enum {
@@ -866,6 +874,8 @@ enum {
 	COLOR_SYNTAX5,
 	COLOR_SYNTAX6,
 	COLOR_SYNTAX7,
+	COLOR_SYNTAX8,
+	COLOR_SYNTAX9,
 	COLOR_KEYWORD      = COLOR_SYNTAX1,
 	COLOR_CONSTANT     = COLOR_SYNTAX4,
 	COLOR_DATATYPE     = COLOR_SYNTAX2,
@@ -880,6 +890,8 @@ enum {
 	COLOR_VARIABLE     = COLOR_SYNTAX6,
 	COLOR_TARGET       = COLOR_SYNTAX5,
 	COLOR_COMMENT      = COLOR_SYNTAX7,
+	COLOR_IDENTIFIER   = COLOR_SYNTAX8,
+	COLOR_TYPE         = COLOR_SYNTAX9,
 };
 
 static Color colors[] = {
@@ -892,6 +904,8 @@ static Color colors[] = {
 	[COLOR_SYNTAX5] = { .fg = COLOR_BLUE,    .bg = -1, .attr = A_BOLD   },
 	[COLOR_SYNTAX6] = { .fg = COLOR_RED,     .bg = -1, .attr = A_NORMAL },
 	[COLOR_SYNTAX7] = { .fg = COLOR_BLUE,    .bg = -1, .attr = A_NORMAL },
+	[COLOR_SYNTAX8] = { .fg = COLOR_CYAN,    .bg = -1, .attr = A_NORMAL },
+	[COLOR_SYNTAX9] = { .fg = COLOR_YELLOW,  .bg = -1, .attr = A_NORMAL },
 	{ /* empty last element, array terminator */                        }
 };
 
@@ -953,6 +967,11 @@ static Color colors[] = {
 static Syntax syntaxes[] = {{
 	.name = "c",
 	.file = "\\.(c(pp|xx)?|h(pp|xx)?|cc)$",
+	.settings = (const char*[]){
+		"set number",
+		"set autoindent",
+		NULL
+	},
 	.rules = {
 		SYNTAX_MULTILINE_COMMENT,
 		SYNTAX_SINGLE_LINE_COMMENT,
@@ -1204,6 +1223,72 @@ static Syntax syntaxes[] = {{
 	},{
 		"\\(|\\)|\\[|\\]|,|;|_|\\{|\\}",
 		&colors[COLOR_BRACKETS],
+	}}
+},{
+	.name = "markdown",
+	.file = "\\.(md|mdwn)$",
+	.rules = {{
+		"(^#{1,6}.*$)", //titles
+		&colors[COLOR_SYNTAX5],
+	},{
+		"((\\* *){3,}|(_ *){3,}|(- *){3,})", // horizontal rules
+		&colors[COLOR_SYNTAX2],
+	},{
+		"(\\*\\*.*\\*\\*)|(__.*__)", // super-bolds
+		&colors[COLOR_SYNTAX4],
+	},{
+		"(\\*.*\\*)|(_.*_)", // bolds
+		&colors[COLOR_SYNTAX3],
+	},{
+		"(\\[.*\\]\\(.*\\))", //links
+		&colors[COLOR_SYNTAX6],
+	},{
+		"(^ *([-\\*\\+]|[0-9]+\\.))", //lists
+		&colors[COLOR_SYNTAX2],
+	},{
+		"(^( {4,}|\t+).*$)", // code blocks
+		&colors[COLOR_SYNTAX7],
+	},{
+		"(`+.*`+)", // inline code
+		&colors[COLOR_SYNTAX7],
+	},{
+		"(^>+.*)", // quotes
+		&colors[COLOR_SYNTAX7],
+	}}
+},{
+	.name = "ledger",
+	.file = "\\.(journal|ledger)$",
+	.rules = {
+	{ /* comment */
+		"^[;#].*",
+		&colors[COLOR_COMMENT],
+	},{ /* value tag */
+		"(  |\t|^ )*; :([^ ][^:]*:)+[ \\t]*$",
+		&colors[COLOR_DATATYPE],
+	},{ /* typed tag */
+		"(  |\t|^ )*; [^:]+::.*",
+		&colors[COLOR_DATATYPE],
+	},{ /* tag */
+		"(  |\t|^ )*; [^:]+:.*",
+		&colors[COLOR_TYPE],
+	},{ /* metadata */
+		"(  |\t|^ )*;.*",
+		&colors[COLOR_CONSTANT],
+	},{ /* date */
+		"^[0-9][^ \t]+",
+		&colors[COLOR_LITERAL],
+	},{ /* account */
+		"^[ \t]+[a-zA-Z:'!*()%&]+",
+		&colors[COLOR_IDENTIFIER]
+	},{ /* amount */
+		"(  |\t)[^;]*",
+		&colors[COLOR_LITERAL],
+	},{ /* automated transaction */
+		"^[=~].*",
+		&colors[COLOR_TYPE],
+	},{ /* directives */
+		"^[!@]?(account|alias|assert|bucket|capture|check|comment|commodity|define|end|fixed|endfixed|include|payee|apply|tag|test|year|[AYNDCIiOobh])"B".*",
+		&colors[COLOR_DATATYPE],
 	}}
 },{
 	/* empty last element, array terminator */
