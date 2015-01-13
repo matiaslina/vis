@@ -859,13 +859,36 @@ size_t window_backspace_key(Win *win) {
 }
 
 size_t window_insert_key(Win *win, const char *c, size_t len) {
+	size_t i = 0;
 	size_t pos = win->cursor.pos;
+	size_t ws_count = 0;
 	text_insert(win->text, pos, c, len);
-	if (win->cursor.line == win->bottomline && memchr(c, '\n', len))
-		window_viewport_down(win, 1);
-	else
-		window_draw(win);
+	window_draw(win);
 	pos += len;
+	window_cursor_to(win, pos);
+	if (memchr(c, '\n', len)) {
+		while(1) {
+			/* First check if we're on the bottom of the window */
+			if (win->cursor.line == win->bottomline)
+				window_viewport_down(win, 1);
+			/* previous line to get the amount of indentation */
+			Line *prev = win->cursor.line->prev;
+			/* We only care about the tabs and spaces at the begining of
+			 * the line */
+			if (prev->cells[win->cursor.col + ws_count].data == '\t') {
+				text_insert(win->text, pos, "\t", 1);
+				ws_count += win->tabwidth;
+			} else if (prev->cells[win->cursor.col].data == ' ') {
+				text_insert(win->text, pos, " ", 1);
+				ws_count += 1;
+			} else {
+				break;
+			}
+		}
+	}
+	window_draw(win);
+	/* Have to check why is this ._. */
+	pos += ws_count/win->tabwidth;
 	window_cursor_to(win, pos);
 	return pos;
 }
