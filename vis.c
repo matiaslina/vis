@@ -202,6 +202,8 @@ static Operator ops[] = {
 
 /* these can be passed as int argument to movement(&(const Arg){ .i = MOVE_* }) */
 enum {
+	MOVE_LINE_DOWN,
+	MOVE_LINE_UP,
 	MOVE_SCREEN_LINE_UP,
 	MOVE_SCREEN_LINE_DOWN,
 	MOVE_SCREEN_LINE_BEGIN,
@@ -281,11 +283,13 @@ static size_t window_lines_middle(const Arg *arg);
 static size_t window_lines_bottom(const Arg *arg);
 
 static Movement moves[] = {
-	[MOVE_SCREEN_LINE_UP]      = { .win = window_line_up                                       },
-	[MOVE_SCREEN_LINE_DOWN]    = { .win = window_line_down                                     },
-	[MOVE_SCREEN_LINE_BEGIN]   = { .win = window_line_begin,        .type = CHARWISE           },
-	[MOVE_SCREEN_LINE_MIDDLE]  = { .win = window_line_middle,       .type = CHARWISE           },
-	[MOVE_SCREEN_LINE_END]     = { .win = window_line_end,          .type = CHARWISE|INCLUSIVE },
+	[MOVE_LINE_UP]             = { .win = window_line_up                                       },
+	[MOVE_LINE_DOWN]           = { .win = window_line_down                                     },
+	[MOVE_SCREEN_LINE_UP]      = { .win = window_screenline_up                                 },
+	[MOVE_SCREEN_LINE_DOWN]    = { .win = window_screenline_down                               },
+	[MOVE_SCREEN_LINE_BEGIN]   = { .win = window_screenline_begin,  .type = CHARWISE           },
+	[MOVE_SCREEN_LINE_MIDDLE]  = { .win = window_screenline_middle, .type = CHARWISE           },
+	[MOVE_SCREEN_LINE_END]     = { .win = window_screenline_end,    .type = CHARWISE|INCLUSIVE },
 	[MOVE_LINE_PREV]           = { .txt = text_line_prev,           .type = LINEWISE           },
 	[MOVE_LINE_BEGIN]          = { .txt = text_line_begin,          .type = LINEWISE           },
 	[MOVE_LINE_START]          = { .txt = text_line_start,          .type = LINEWISE           },
@@ -380,6 +384,8 @@ static TextObject textobjs[] = {
 
 /* if some movements are forced to be linewise, they are translated to text objects */
 static TextObject *moves_linewise[] = {
+	[MOVE_LINE_UP]          = &textobjs[TEXT_OBJ_LINE_UP],
+	[MOVE_LINE_DOWN]        = &textobjs[TEXT_OBJ_LINE_DOWN],
 	[MOVE_SCREEN_LINE_UP]   = &textobjs[TEXT_OBJ_LINE_UP],
 	[MOVE_SCREEN_LINE_DOWN] = &textobjs[TEXT_OBJ_LINE_DOWN],
 };
@@ -778,26 +784,20 @@ static size_t line(const Arg *arg) {
 }
 
 static size_t column(const Arg *arg) {
-	char c;
-	EditorWin *win = vis->win;
-	size_t pos = window_cursor_get(win->win);
-	Iterator it = text_iterator_get(win->text, text_line_begin(win->text, pos));
-	int count = action.count;
-	while (count > 0 && text_iterator_byte_get(&it, &c) && c != '\n')
-		text_iterator_byte_next(&it, NULL);
-	return it.pos;
+	size_t pos = window_cursor_get(vis->win->win);
+	return text_line_offset(vis->win->text, pos, action.count);
 }
 
 static size_t window_lines_top(const Arg *arg) {
-	return window_line_goto(vis->win->win, action.count);
+	return window_screenline_goto(vis->win->win, action.count);
 }
 
 static size_t window_lines_middle(const Arg *arg) {
-	return window_line_goto(vis->win->win, vis->win->height / 2);
+	return window_screenline_goto(vis->win->win, vis->win->height / 2);
 }
 
 static size_t window_lines_bottom(const Arg *arg) {
-	return window_line_goto(vis->win->win, vis->win->height - action.count);
+	return window_screenline_goto(vis->win->win, vis->win->height - action.count);
 }
 
 /** key bindings functions of type: void (*func)(const Arg*) */

@@ -48,23 +48,23 @@ static Mode vis_modes[VIS_MODE_LAST];
 
 /* command recognized at the ':'-prompt. tested top to bottom, first match wins. */
 static Command cmds[] = {
-	{ "^bd(elete)?!?$",  cmd_bdelete,    false },
-	{ "^e(dit)?!?$",     cmd_edit,       false },
-	{ "^new$",           cmd_new,        false },
-	{ "^o(pen)?$",       cmd_open,       false },
-	{ "^qa(ll)?!?$",     cmd_qall,       false },
-	{ "^q(uit)?!?$",     cmd_quit,       false },
-	{ "^r(ead)?$",       cmd_read,       false },
-	{ "^sav(as)?$",      cmd_saveas,     false },
-	{ "^set?$",          cmd_set,        true  },
-	{ "^sp(lit)?$",      cmd_split,      false },
-	{ "^s(ubstitute)?$", cmd_substitute, false },
-	{ "^vnew?$",         cmd_vnew,       false },
-	{ "^v(split)?$",     cmd_vsplit,     false },
-	{ "^wq!?$",          cmd_wq,         false },
-	{ "^w(rite)?$",      cmd_write,      false },
-	{ "^x(it)?!?$",      cmd_xit,        false },
-	{ /* array terminator */                   },
+	{ "^bd(e|el|ele|elet|elete)?!?$", cmd_bdelete,    false },
+	{ "^e(d|di|dit)?!?$",             cmd_edit,       false },
+	{ "^new$",                        cmd_new,        false },
+	{ "^o(p|pe|pen)?$",               cmd_open,       false },
+	{ "^qa(l|ll)?!?$",                cmd_qall,       false },
+	{ "^q(u|ui|uit)?!?$",             cmd_quit,       false },
+	{ "^r(e|ea|ead)?$",               cmd_read,       false },
+	{ "^sav(a|as)?!?$",               cmd_saveas,     false },
+	{ "^set?$",                       cmd_set,        true  },
+	{ "^sp(l|li|lit)?$",              cmd_split,      false },
+	{ "^s(u|ubstitute)?$",            cmd_substitute, false },
+	{ "^vnew?$",                      cmd_vnew,       false },
+	{ "^vs(p|pl|pli|plit)?$",         cmd_vsplit,     false },
+	{ "^wq!?$",                       cmd_wq,         false },
+	{ "^w(r|ri|rit|rite)?!?$",        cmd_write,      false },
+	{ "^x(i|it)?!?$",                 cmd_xit,        false },
+	{ /* array terminator */                                },
 };
 
 /* draw a statubar, do whatever you want with win->statuswin curses window */
@@ -102,8 +102,8 @@ static KeyBinding basic_movement[] = {
 	{ { KEY(SLEFT)              }, movement, { .i = MOVE_LONGWORD_START_PREV } },
 	{ { KEY(RIGHT)              }, movement, { .i = MOVE_CHAR_NEXT           } },
 	{ { KEY(SRIGHT)             }, movement, { .i = MOVE_LONGWORD_START_NEXT } },
-	{ { KEY(UP)                 }, movement, { .i = MOVE_SCREEN_LINE_UP      } },
-	{ { KEY(DOWN)               }, movement, { .i = MOVE_SCREEN_LINE_DOWN    } },
+	{ { KEY(UP)                 }, movement, { .i = MOVE_LINE_UP             } },
+	{ { KEY(DOWN)               }, movement, { .i = MOVE_LINE_DOWN           } },
 	{ { KEY(PPAGE)              }, wscroll,  { .i = -PAGE                    } },
 	{ { KEY(NPAGE)              }, wscroll,  { .i = +PAGE                    } },
 	{ { KEY(HOME)               }, movement, { .i = MOVE_LINE_START          } },
@@ -116,12 +116,16 @@ static KeyBinding vis_movements[] = {
 	{ { NONE('h')               }, movement,     { .i = MOVE_CHAR_PREV           } },
 	{ { NONE(' ')               }, movement,     { .i = MOVE_CHAR_NEXT           } },
 	{ { NONE('l')               }, movement,     { .i = MOVE_CHAR_NEXT           } },
-	{ { NONE('k')               }, movement,     { .i = MOVE_SCREEN_LINE_UP      } },
-	{ { CONTROL('P')            }, movement,     { .i = MOVE_SCREEN_LINE_UP      } },
-	{ { NONE('j')               }, movement,     { .i = MOVE_SCREEN_LINE_DOWN    } },
-	{ { CONTROL('J')            }, movement,     { .i = MOVE_SCREEN_LINE_DOWN    } },
-	{ { CONTROL('N')            }, movement,     { .i = MOVE_SCREEN_LINE_DOWN    } },
-	{ { KEY(ENTER)              }, movement,     { .i = MOVE_SCREEN_LINE_DOWN    } },
+	{ { NONE('k')               }, movement,     { .i = MOVE_LINE_UP             } },
+	{ { CONTROL('P')            }, movement,     { .i = MOVE_LINE_UP             } },
+	{ { NONE('g'), NONE('k')    }, movement,     { .i = MOVE_SCREEN_LINE_UP      } },
+	{ { NONE('g'), KEY(UP)      }, movement,     { .i = MOVE_SCREEN_LINE_UP      } },
+	{ { NONE('j')               }, movement,     { .i = MOVE_LINE_DOWN           } },
+	{ { CONTROL('J')            }, movement,     { .i = MOVE_LINE_DOWN           } },
+	{ { CONTROL('N')            }, movement,     { .i = MOVE_LINE_DOWN           } },
+	{ { KEY(ENTER)              }, movement,     { .i = MOVE_LINE_DOWN           } },
+	{ { NONE('g'), NONE('j')    }, movement,     { .i = MOVE_SCREEN_LINE_DOWN    } },
+	{ { NONE('g'), KEY(DOWN)    }, movement,     { .i = MOVE_SCREEN_LINE_DOWN    } },
 	{ { NONE('^')               }, movement,     { .i = MOVE_LINE_START          } },
 	{ { NONE('g'), NONE('_')    }, movement,     { .i = MOVE_LINE_FINISH         } },
 	{ { NONE('$')               }, movement,     { .i = MOVE_LINE_LASTCHAR       } },
@@ -395,7 +399,7 @@ static KeyBinding vis_mode_normal[] = {
 	{ { NONE('.')               }, repeat,         { NULL                      } },
 	{ { NONE('o')               }, openline,       { .i = MOVE_LINE_NEXT       } },
 	{ { NONE('O')               }, openline,       { .i = MOVE_LINE_PREV       } },
-	{ { NONE('J')               }, join,           { .i = MOVE_SCREEN_LINE_DOWN} },
+	{ { NONE('J')               }, join,           { .i = MOVE_LINE_NEXT       } },
 	{ { NONE('x')               }, delete,         { .i = MOVE_CHAR_NEXT       } },
 	{ { NONE('r')               }, replace,        { NULL                      } },
 	{ { NONE('i')               }, switchmode,     { .i = VIS_MODE_INSERT      } },
@@ -771,71 +775,6 @@ static Mode vis_modes[] = {
 	},
 };
 
-/* incomplete list of useful but currently missing functionality from nano's help ^G:
-
-^X      (F2)            Close the current file buffer / Exit from nano
-^O      (F3)            Write the current file to disk
-^J      (F4)            Justify the current paragraph
-
-^R      (F5)            Insert another file into the current one
-^W      (F6)            Search for a string or a regular expression
-
-^K      (F9)            Cut the current line and store it in the cutbuffer
-^U      (F10)           Uncut from the cutbuffer into the current line
-^T      (F12)           Invoke the spell checker, if available
-
-
-^_      (F13)   (M-G)   Go to line and column number
-^\      (F14)   (M-R)   Replace a string or a regular expression
-^^      (F15)   (M-A)   Mark text at the cursor position
-M-W     (F16)           Repeat last search
-
-M-^     (M-6)           Copy the current line and store it in the cutbuffer
-M-V                     Insert the next keystroke verbatim
-
-XXX: CONTROL(' ') = 0, ^Space                  Go forward one word
-*/
-
-static KeyBinding nano_keys[] = {
-	{ { CONTROL('D')            }, call,     { .f = editor_delete_key      } },
-	BACKSPACE(                     call,        f,     editor_backspace_key  ),
-	{ { CONTROL('F')            }, movement, { .i = MOVE_CHAR_NEXT         } },
-	{ { CONTROL('P')            }, movement, { .i = MOVE_SCREEN_LINE_UP    } },
-	{ { CONTROL('N')            }, movement, { .i = MOVE_SCREEN_LINE_DOWN  } },
-	{ { CONTROL('Y')            }, wscroll,  { .i = -PAGE                  } },
-	{ { KEY(F(7))               }, wscroll,  { .i = -PAGE                  } },
-	{ { CONTROL('V')            }, wscroll,  { .i = +PAGE                  } },
-	{ { KEY(F(8))               }, wscroll,  { .i = +PAGE                  } },
-#if 0
-	// CONTROL(' ') == 0 which signals the end of array
-	{ { CONTROL(' ')            }, movement, { .i = MOVE_LONGWORD_START_NEXT   } },
-#endif
-	{ { META(' ')               }, movement, { .i = MOVE_LONGWORD_START_PREV   } },
-	{ { CONTROL('A')            }, movement, { .i = MOVE_LINE_START        } },
-	{ { CONTROL('E')            }, movement, { .i = MOVE_LINE_END          } },
-	{ { META(']')               }, movement, { .i = MOVE_BRACKET_MATCH     } },
-	{ { META(')')               }, movement, { .i = MOVE_PARAGRAPH_PREV    } },
-	{ { META('(')               }, movement, { .i = MOVE_PARAGRAPH_NEXT    } },
-	{ { META('\\')              }, movement, { .i = MOVE_FILE_BEGIN        } },
-	{ { META('|')               }, movement, { .i = MOVE_FILE_BEGIN        } },
-	{ { META('/')               }, movement, { .i = MOVE_FILE_END          } },
-	{ { META('?')               }, movement, { .i = MOVE_FILE_END          } },
-	{ { META('U')               }, undo,     { NULL                        } },
-	{ { META('E')               }, redo,     { NULL                        } },
-#if 0
-	{ { CONTROL('I') },   insert,   { .s = "\t"                   } },
-	/* TODO: handle this in vis to insert \n\r when appriopriate */
-	{ { CONTROL('M') },   insert,   { .s = "\n"                   } },
-#endif
-	{ { CONTROL('L')            }, call,      { .f = editor_draw           } },
-	{ /* empty last element, array terminator */                             },
-};
-
-static Mode nano[] = {
-	{ .parent = NULL,     .bindings = basic_movement,  },
-	{ .parent = &nano[0], .bindings = nano_keys, .input = vis_mode_insert_input },
-};
-
 /* list of vis configurations, first entry is default. name is matched with
  * argv[0] i.e. program name upon execution
  */
@@ -843,12 +782,6 @@ static Config editors[] = {
 	{
 		.name = "vis",
 		.mode = &vis_modes[VIS_MODE_NORMAL],
-		.statusbar = statusbar,
-		.keypress = vis_keypress,
-	},
-	{
-		.name = "nano",
-		.mode = &nano[1],
 		.statusbar = statusbar,
 		.keypress = vis_keypress,
 	},

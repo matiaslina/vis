@@ -1,45 +1,28 @@
 include config.mk
 
-SRC = editor.c window.c text.c text-motions.c text-objects.c register.c buffer.c ring-buffer.c
-HDR := ${SRC:.c=.h} macro.h syntax.h util.h config.def.h
-SRC += vis.c
-OBJ = ${SRC:.c=.o}
-ALL = ${SRC} ${HDR} config.mk Makefile LICENSE README vis.1
+ALL = *.c *.h config.mk Makefile LICENSE README vis.1
 
-all: clean options vis
-
-options:
-	@echo vis build options:
-	@echo "CFLAGS   = ${CFLAGS}"
-	@echo "LDFLAGS  = ${LDFLAGS}"
-	@echo "CC       = ${CC}"
+all: vis
 
 config.h:
-#TODO	cp config.def.h config.h
-	ln -fs config.def.h config.h
+	cp config.def.h config.h
 
-.c.o:
-	@echo CC $<
-	@${CC} -c ${CFLAGS} $<
-
-${OBJ}: config.h config.mk
-
-vis: ${OBJ}
-	@echo CC -o $@
-	@${CC} -o $@ ${OBJ} ${LDFLAGS}
-	@ln -sf $@ nano
+vis: config.h config.mk *.c *.h
+	@echo ${CC} ${CFLAGS} *.c ${LDFLAGS} -o $@
+	@${CC} ${CFLAGS} *.c ${LDFLAGS} -o $@
 
 debug: clean
 	@make CFLAGS='${DEBUG_CFLAGS}'
 
 clean:
 	@echo cleaning
-	@rm -f vis nano ${OBJ} vis-${VERSION}.tar.gz
+	@rm -f vis vis-${VERSION}.tar.gz
 
 dist: clean
 	@echo creating dist tarball
 	@mkdir -p vis-${VERSION}
 	@cp -R ${ALL} vis-${VERSION}
+	@rm -f vis-${VERSION}/config.h
 	@tar -cf vis-${VERSION}.tar vis-${VERSION}
 	@gzip vis-${VERSION}.tar
 	@rm -rf vis-${VERSION}
@@ -62,4 +45,4 @@ uninstall:
 	@echo removing manual page from ${DESTDIR}${MANPREFIX}/man1
 	@rm -f ${DESTDIR}${MANPREFIX}/man1/vis.1
 
-.PHONY: all options clean dist install uninstall debug
+.PHONY: all clean dist install uninstall debug
