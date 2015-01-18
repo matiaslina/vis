@@ -644,6 +644,7 @@ bool text_range_save(Text *txt, Filerange *range, const char *filename) {
 	}
 	if (close(fd) == -1)
 		goto err;
+	fd = -1;
 	if (rename(tmpname, filename) == -1)
 		goto err;
 	txt->saved_action = txt->undo;
@@ -756,13 +757,13 @@ Text *text_load_fd(int fd) {
 }
 
 static void print_piece(Piece *p) {
-	fprintf(stderr, "index: %d\tnext: %d\tprev: %d\t len: %zd\t data: %p\n", p->index,
+	fprintf(stdout, "index: %d\tnext: %d\tprev: %d\t len: %zd\t data: %p\n", p->index,
 		p->next ? p->next->index : -1,
 		p->prev ? p->prev->index : -1,
 		p->len, p->data);
-	fflush(stderr);
-	write(2, p->data, p->len);
-	write(2, "\n", 1);
+	fwrite(p->data, p->len, 1, stdout);
+	fputc('\n', stdout);
+	fflush(stdout);
 }
 
 void text_debug(Text *txt) {

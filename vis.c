@@ -1357,7 +1357,7 @@ static bool cmd_set(Filerange *range, const char *argv[]) {
 		[OPTION_AUTOINDENT] = { "^(autoindent|ai)$", OPTION_TYPE_BOOL   },
 		[OPTION_EXPANDTAB]  = { "^(expandtab|et)$",  OPTION_TYPE_BOOL   },
 		[OPTION_TABWIDTH]   = { "^(tabwidth|tw)$",   OPTION_TYPE_NUMBER },
-		[OPTION_SYNTAX]     = { "^syntax$",          OPTION_TYPE_STRING },
+		[OPTION_SYNTAX]     = { "^(syntax|syn?)$",   OPTION_TYPE_STRING },
 		[OPTION_NUMBER]     = { "^(numbers?|nu)$",   OPTION_TYPE_BOOL   },
 	};
 
@@ -1567,8 +1567,7 @@ static bool cmd_read(Filerange *range, const char *argv[]) {
 		text_insert(vis->win->text, pos, data, info.st_size);
 		pos += info.st_size;
 	err:
-		if (fd > 2)
-			close(fd);
+		close(fd);
 		if (data && data != MAP_FAILED)
 			munmap(data, info.st_size);
 	}
