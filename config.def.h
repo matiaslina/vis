@@ -46,25 +46,29 @@ enum {
 
 static Mode vis_modes[VIS_MODE_LAST];
 
-/* command recognized at the ':'-prompt. tested top to bottom, first match wins. */
+/* command recognized at the ':'-prompt. commands are found using a unique
+ * prefix match. that is if a command should be available under an abbreviation
+ * which is a prefix for another command it has to be added as an alias. the
+ * long human readable name should always come first */
 static Command cmds[] = {
-	{ "^bd(e|el|ele|elet|elete)?!?$", cmd_bdelete,    false },
-	{ "^e(d|di|dit)?!?$",             cmd_edit,       false },
-	{ "^new$",                        cmd_new,        false },
-	{ "^o(p|pe|pen)?$",               cmd_open,       false },
-	{ "^qa(l|ll)?!?$",                cmd_qall,       false },
-	{ "^q(u|ui|uit)?!?$",             cmd_quit,       false },
-	{ "^r(e|ea|ead)?$",               cmd_read,       false },
-	{ "^sav(e|ea|eas)?!?$",           cmd_saveas,     false },
-	{ "^set?$",                       cmd_set,        true  },
-	{ "^sp(l|li|lit)?$",              cmd_split,      false },
-	{ "^s(u|ubstitute)?$",            cmd_substitute, false },
-	{ "^vnew?$",                      cmd_vnew,       false },
-	{ "^vs(p|pl|pli|plit)?$",         cmd_vsplit,     false },
-	{ "^wq!?$",                       cmd_wq,         false },
-	{ "^w(r|ri|rit|rite)?!?$",        cmd_write,      false },
-	{ "^x(i|it)?!?$",                 cmd_xit,        false },
-	{ /* array terminator */                                },
+	/* command name / optional alias, function,       options */
+	{ { "bdelete"                  }, cmd_bdelete,    CMD_OPT_FORCE },
+	{ { "edit"                     }, cmd_edit,       CMD_OPT_FORCE },
+	{ { "new"                      }, cmd_new,        CMD_OPT_NONE  },
+	{ { "open"                     }, cmd_open,       CMD_OPT_NONE  },
+	{ { "qall"                     }, cmd_qall,       CMD_OPT_FORCE },
+	{ { "quit", "q"                }, cmd_quit,       CMD_OPT_FORCE },
+	{ { "read",                    }, cmd_read,       CMD_OPT_NONE  },
+	{ { "saveas"                   }, cmd_saveas,     CMD_OPT_FORCE },
+	{ { "set",                     }, cmd_set,        CMD_OPT_ARGS  },
+	{ { "split"                    }, cmd_split,      CMD_OPT_NONE  },
+	{ { "substitute", "s"          }, cmd_substitute, CMD_OPT_NONE  },
+	{ { "vnew"                     }, cmd_vnew,       CMD_OPT_NONE  },
+	{ { "vsplit",                  }, cmd_vsplit,     CMD_OPT_NONE  },
+	{ { "wq",                      }, cmd_wq,         CMD_OPT_FORCE },
+	{ { "write", "w"               }, cmd_write,      CMD_OPT_FORCE },
+	{ { "xit",                     }, cmd_xit,        CMD_OPT_FORCE },
+	{ /* array terminator */                                        },
 };
 
 /* draw a statubar, do whatever you want with win->statuswin curses window */
@@ -380,7 +384,14 @@ static KeyBinding vis_mode_normal[] = {
 	{ { CONTROL('w'), NONE('s') }, cmd,            { .s = "split"              } },
 	{ { CONTROL('w'), NONE('v') }, cmd,            { .s = "vsplit"             } },
 	{ { CONTROL('w'), NONE('j') }, call,           { .f = editor_window_next   } },
+	{ { CONTROL('w'), NONE('l') }, call,           { .f = editor_window_next   } },
 	{ { CONTROL('w'), NONE('k') }, call,           { .f = editor_window_prev   } },
+	{ { CONTROL('w'), NONE('h') }, call,           { .f = editor_window_prev   } },
+	{ { CONTROL('w'), CONTROL('j') }, call,        { .f = editor_window_next   } },
+	{ { CONTROL('w'), CONTROL('l') }, call,        { .f = editor_window_next   } },
+	{ { CONTROL('w'), CONTROL('k') }, call,        { .f = editor_window_prev   } },
+	{ { CONTROL('w'), CONTROL('h') }, call,        { .f = editor_window_prev   } },
+	{ { CONTROL('w'), CONTROL('w') }, call,        { .f = editor_window_next   } },
 	{ { CONTROL('B')            }, wscroll,        { .i = -PAGE                } },
 	{ { CONTROL('F')            }, wscroll,        { .i = +PAGE                } },
 	{ { CONTROL('U')            }, wscroll,        { .i = -PAGE_HALF           } },
@@ -440,6 +451,7 @@ static KeyBinding vis_mode_visual[] = {
 	{ { NONE('r')               }, operator,       { .i = OP_CHANGE            } },
 	{ { NONE('s')               }, operator,       { .i = OP_CHANGE            } },
 	{ { NONE('J')               }, operator,       { .i = OP_JOIN              } },
+	{ { NONE('o')               }, selection_end,  { NULL                      } },
 	{ /* empty last element, array terminator */                                 },
 };
 
